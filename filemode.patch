@@ -1,0 +1,130 @@
+diff -uNr php-5.6.8/sapi/fpm/fpm/fpm_conf.c php-5.6.8-patch/sapi/fpm/fpm/fpm_conf.c
+--- php-5.6.8/sapi/fpm/fpm/fpm_conf.c	2015-04-16 02:05:57.000000000 +0800
++++ php-5.6.8-patch/sapi/fpm/fpm/fpm_conf.c	2015-04-23 13:30:38.350847924 +0800
+@@ -57,6 +57,7 @@
+ 
+ static int fpm_conf_load_ini_file(char *filename TSRMLS_DC);
+ static char *fpm_conf_set_integer(zval *value, void **config, intptr_t offset);
++static char *fpm_conf_set_uinteger(zval *value, void **config, intptr_t offset);
+ #if 0 /* not used for now */
+ static char *fpm_conf_set_long(zval *value, void **config, intptr_t offset);
+ #endif
+@@ -94,6 +95,7 @@
+ static struct ini_value_parser_s ini_fpm_global_options[] = {
+ 	{ "pid",                         &fpm_conf_set_string,          GO(pid_file) },
+ 	{ "error_log",                   &fpm_conf_set_string,          GO(error_log) },
++	{ "file_mode",                   &fpm_conf_set_uinteger,        GO(file_mode) },
+ #ifdef HAVE_SYSLOG_H
+ 	{ "syslog.ident",                &fpm_conf_set_string,          GO(syslog_ident) },
+ 	{ "syslog.facility",             &fpm_conf_set_syslog_facility, GO(syslog_facility) },
+@@ -263,6 +265,27 @@
+ }
+ /* }}} */
+ 
++static char *fpm_conf_set_uinteger(zval *value, void **config, intptr_t offset) /* {{{ */
++{
++	char *val = Z_STRVAL_P(value);
++	char *p;
++    
++    if(strlen(val) != 4 ){
++        return "is not a valid file mode";
++    }
++
++	/* we don't use strtol because we don't want to allow negative values */
++	for (p = val; *p; p++) {
++		if (p == val && *p != '0') return "is not a valid file mode";
++		if (*p < '0' || *p > '7') {
++			return "is not a valid file mode";
++		}
++	}
++	* (unsigned int *) ((char *) *config + offset) = strtol(val,NULL,8);
++	return NULL;
++}
++/* }}} */
++
+ #if 0 /* not used for now */
+ static char *fpm_conf_set_long(zval *value, void **config, intptr_t offset) /* {{{ */
+ {
+@@ -952,8 +975,15 @@
+ 
+ 			if (wp->config->slowlog && *wp->config->slowlog) {
+ 				int fd;
++                unsigned int file_mode;
++                
++                if(!fpm_global_config.file_mode){
++                    file_mode = 0644;
++                }else{
++                    file_mode = fpm_global_config.file_mode;
++                }
+ 
+-				fd = open(wp->config->slowlog, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR);
++				fd = open(wp->config->slowlog, O_WRONLY | O_APPEND | O_CREAT, file_mode);
+ 
+ 				if (0 > fd) {
+ 					zlog(ZLOG_SYSERROR, "Unable to create or open slowlog(%s)", wp->config->slowlog);
+diff -uNr php-5.6.8/sapi/fpm/fpm/fpm_conf.h php-5.6.8-patch/sapi/fpm/fpm/fpm_conf.h
+--- php-5.6.8/sapi/fpm/fpm/fpm_conf.h	2015-04-16 02:05:57.000000000 +0800
++++ php-5.6.8-patch/sapi/fpm/fpm/fpm_conf.h	2015-04-23 11:32:05.010685616 +0800
+@@ -26,6 +26,7 @@
+ struct fpm_global_config_s {
+ 	char *pid_file;
+ 	char *error_log;
++    unsigned int file_mode;
+ #ifdef HAVE_SYSLOG_H
+ 	char *syslog_ident;
+ 	int syslog_facility;
+diff -uNr php-5.6.8/sapi/fpm/fpm/fpm_log.c php-5.6.8-patch/sapi/fpm/fpm/fpm_log.c
+--- php-5.6.8/sapi/fpm/fpm/fpm_log.c	2015-04-16 02:05:57.000000000 +0800
++++ php-5.6.8-patch/sapi/fpm/fpm/fpm_log.c	2015-04-23 13:32:42.606850760 +0800
+@@ -41,8 +41,15 @@
+ 			continue;
+ 		}
+ 		ret = 0;
++        unsigned int file_mode;
++        
++        if(!fpm_global_config.file_mode){
++            file_mode = 0644;
++        }else{
++            file_mode = fpm_global_config.file_mode;
++        }
+ 		
+-		fd = open(wp->config->access_log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR);
++		fd = open(wp->config->access_log, O_WRONLY | O_APPEND | O_CREAT, file_mode);
+ 		if (0 > fd) {
+ 			zlog(ZLOG_SYSERROR, "failed to open access log (%s)", wp->config->access_log);
+ 			return -1;
+diff -uNr php-5.6.8/sapi/fpm/fpm/fpm_stdio.c php-5.6.8-patch/sapi/fpm/fpm/fpm_stdio.c
+--- php-5.6.8/sapi/fpm/fpm/fpm_stdio.c	2015-04-16 02:05:57.000000000 +0800
++++ php-5.6.8-patch/sapi/fpm/fpm/fpm_stdio.c	2015-04-23 13:33:11.690851423 +0800
+@@ -298,8 +298,15 @@
+ 		return 0;
+ 	}
+ #endif
++        unsigned int file_mode;
++        
++        if(!fpm_global_config.file_mode){
++            file_mode = 0644;
++        }else{
++            file_mode = fpm_global_config.file_mode;
++        }
+ 
+-	fd = open(fpm_global_config.error_log, O_WRONLY | O_APPEND | O_CREAT, S_IRUSR | S_IWUSR);
++	fd = open(fpm_global_config.error_log, O_WRONLY | O_APPEND | O_CREAT, file_mode);
+ 	if (0 > fd) {
+ 		zlog(ZLOG_SYSERROR, "failed to open error_log (%s)", fpm_global_config.error_log);
+ 		return -1;
+diff -uNr php-5.6.8/sapi/fpm/php-fpm.conf.in php-5.6.8-patch/sapi/fpm/php-fpm.conf.in
+--- php-5.6.8/sapi/fpm/php-fpm.conf.in	2015-04-16 02:05:57.000000000 +0800
++++ php-5.6.8-patch/sapi/fpm/php-fpm.conf.in	2015-04-23 11:46:57.402705978 +0800
+@@ -31,6 +31,11 @@
+ ; Default Value: log/php-fpm.log
+ ;error_log = log/php-fpm.log
+ 
++;file mode for creating log files.
++;Note: It must in unix file mode format.
++;Default Value: 0644
++;file_mode = 0644
++
+ ; syslog_facility is used to specify what type of program is logging the
+ ; message. This lets syslogd specify that messages from different facilities
+ ; will be handled differently.
